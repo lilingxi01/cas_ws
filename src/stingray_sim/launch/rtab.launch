@@ -1,0 +1,64 @@
+<launch>
+
+    <!-- Pass in world parameter -->
+    <arg name="world" default="empty_world.world"/>
+
+    <!-- start gazebo base -->
+    <include file="$(find stingray_sim)/launch/gazebo_base.launch">
+        <arg name="world" value="$(arg world)"/>
+    </include>
+
+   <!-- load configuration -->
+  <rosparam command="load" file="$(find joint_state_controller)/joint_state_controller.yaml" />
+
+  <!-- spawn controller -->
+  <node name="joint_state_controller_spawner" pkg="controller_manager" type="spawner" output="screen" args="joint_state_controller" /> 
+
+    <!-- Load the urdf into the parameter server. -->
+    <param name="my_robot_description" textfile="$(find stingray_sim)/models/triton/model.sdf"/>
+    
+   <node pkg="robot_state_publisher" type="robot_state_publisher" name="rob_st_pub" >
+      <remap from="robot_description" to="my_robot_description" />
+      <remap from="joint_states" to="joint_states" />
+    </node>
+
+    <!-- launch helper nodes to post odometery and draw paths -->
+    <node pkg="stingray_sim" name="odom_publisher" type="position_publisher.py"/>
+    <node pkg="stingray_sim" name="path_drawing" type="draw_path.py"/>
+    
+    <!-- convert depth image to laserscan topic -->
+    <node pkg="depthimage_to_laserscan" type="depthimage_to_laserscan" name="depth_to_laser">
+        <param name="scan_height" value="3"/>
+        <remap from="image" to="camera/depth/image_raw"/>
+    </node>
+
+
+
+    <!-- start the rtab mapping -->
+    <node name="rtabmap" pkg="rtabmap_ros" type="rtabmap" output="screen" args="--delete_db_on_start">
+          <param name="frame_id" type="string" value="base_link"/>
+
+          <param name="subscribe_depth" type="bool" value="true"/>
+          <param name="subscribe_scan" type="bool" value="true"/>
+
+          <remap from="odom" to="/triton/odom"/>
+          <remap from="scan" to="/scan"/>
+
+          <remap from="rgb/image"       to="/camera/color/image_rect_color"/>
+          <remap from="depth/image"     to="/camera/color/image_raw"/>
+          <remap from="rgb/camera_info" to="/camera/color/camera_info"/>
+
+          <param name="queue_size" type="int" value="10"/>
+
+          <!-- RTAB-Map's parameters -->
+          <param name="RGBD/ProximityBySpace"     type="string" value="false"/>
+          <param name="RGBD/AngularUpdate"        type="string" value="0.01"/>
+          <param name="RGBD/LinearUpdate"         type="string" value="0.01"/>
+          <param name="RGBD/OptimizeFromGraphEnd" type="string" value="false"/>
+          <param name="Reg/Force3DoF"             type="string" value="true"/>
+          <param name="Vis/MinInliers"            type="string" value="12"/>
+    </node> 
+
+
+
+</launch>

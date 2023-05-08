@@ -1,0 +1,22 @@
+<launch>
+    <!--NOTE: we need to replace triton-lidar world with a new world once v7 Triton is finished-->
+    <arg name="world_file" default="worlds/largemaze-triton-lidar.world"/>
+  
+    <include file="$(find gazebo_ros)/launch/empty_world.launch">
+      <arg name="use_sim_time" value="true"/>
+      <arg name="debug" value="false "/>  <!-- false for real training, true for debugging -->
+      <arg name="paused" value="false"/>
+      <arg name="gui" value="true" />
+      <arg name="world_name" value="$(arg world_file)"/>
+      <arg name="verbose" value="true"/>
+      <arg name="recording" value="false"/>
+      
+    </include>
+
+    <node
+      pkg="stingray_sim"
+      name="teleop"
+      type="teleop_robot.py"
+      output="screen"
+    />
+</launch>

@@ -1,0 +1,21 @@
+<launch>
+
+<arg name="world" default="empty_world.world"/>
+
+    <include file="$(find stingray_sim)/launch/gazebo.launch">
+        <arg name="world" value="$(arg world)"/>
+    </include>
+
+    <node pkg="depthimage_to_laserscan" type="depthimage_to_laserscan" name="depth_to_laser">
+        <param name="scan_height" value="3"/>
+        <param name="output_frame_id" value="triton_link"/>
+        <remap from="image" to="camera/depth/image_raw"/>
+    </node>
+
+    <node pkg="gmapping" type="slam_gmapping" name="slam" output="screen">
+        <param name="base_frame" value="odom"/>
+        <param name="_linearUpdate" value="0.0"/>
+        <param name="_angularUpdate" value="0.0"/>
+    </node>
+
+</launch>
