@@ -1,6 +1,6 @@
 <launch>
     <arg name="world_file" default="$(find cas_simulator)/worlds/cas_simulator_map.sdf"/>
-  
+
     <include file="$(find gazebo_ros)/launch/empty_world.launch">
 	<arg name="use_sim_time" value="true"/>
 	<arg name="debug" value="false "/>  <!-- false for real training, true for debugging -->
