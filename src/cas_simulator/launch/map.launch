@@ -19,4 +19,11 @@
 	respawn="false"
 	output="screen"
     />
+
+    <node
+	name="mock_ball"
+	pkg="cas_simulator"
+	type="mock_ball.py"
+	output="screen"
+    />
 </launch>
