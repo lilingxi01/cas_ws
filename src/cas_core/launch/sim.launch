@@ -1,0 +1,12 @@
+<launch>
+  <include file="$(find cas_simulator)/launch/map.launch">
+  </include>
+
+  <node
+    pkg="cas_core"
+    name="cas_core"
+    type="__init__.py"
+    output="screen"
+  />
+</launch>
+
