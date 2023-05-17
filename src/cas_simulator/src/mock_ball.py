@@ -3,6 +3,7 @@
 import sys
 import math
 import signal
+import random
 
 import rospy
 from gazebo_msgs.msg import ModelState
@@ -100,7 +101,8 @@ def spawn_red_ball(pose):
 
     # Apply a force to the ball so it moves.
     if response.success:
-        response = apply_force_to_ball(f"mock_ball_{ball_index}", pose, 270)
+        force_angle = random.randint(240, 300)
+        response = apply_force_to_ball(f"mock_ball_{ball_index}", pose, force_angle)
 
     ball_index += 1
     return response
@@ -110,6 +112,7 @@ def subscribe_to_spawn_balls():
     def callback(msg):
         global should_spawn_balls
         should_spawn_balls = msg.data
+        rospy.loginfo(f'[CAS_SIM] Should ball spawn: {should_spawn_balls}')
 
     rospy.Subscriber("/cas_sim/spawn_balls", Bool, callback)
 
@@ -132,8 +135,9 @@ def main_loop():
             continue
         if should_spawn_balls:
             ball_pose = Pose()
-            ball_pose.position.x = 0.0
-            ball_pose.position.y = 2.0
+            # Randomize position x between -1.5 and 1.5.
+            ball_pose.position.x = random.uniform(-2.5, 2.5)
+            ball_pose.position.y = 2.5
             ball_pose.position.z = ball_diameter / 2 + ground_offset
 
             if spawn_red_ball(ball_pose):
