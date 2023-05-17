@@ -5,6 +5,7 @@ import math
 import signal
 import random
 
+import numpy as np
 import rospy
 from gazebo_msgs.msg import ModelState
 from gazebo_msgs.srv import SpawnModel
@@ -21,18 +22,24 @@ signal.signal(signal.SIGINT, signal_handler)
 
 
 # Define the size of the ball.
-ball_diameter = 0.2
-spawn_interval = 30
-throw_force = 10
-ground_offset = 0.02
+ball_diameter = 0.15
+spawn_interval = 20
+throw_force = 5
+ground_offset = 0
+
+
+def gaussian_distribution(mean, sigma, bounds):
+    random_number = np.random.normal(mean, sigma)
+    if random_number < bounds[0]:
+        return bounds[0]
+    elif random_number > bounds[1]:
+        return bounds[1]
+    return random_number
 
 
 global should_spawn_balls, ball_index
 should_spawn_balls = False
 ball_index = 0
-
-
-# TODO: Random angle has not been done yet.
 
 
 def apply_force_to_ball(model, model_pose, force_theta):
@@ -75,6 +82,18 @@ def spawn_red_ball(pose):
                 <radius>{ball_diameter / 2}</radius>
               </sphere>
             </geometry>
+            <surface>
+              <bounce>
+                <restitution_coefficient>1.0</restitution_coefficient>
+                <threshold>1e-3</threshold>
+              </bounce>
+              <friction>
+                <ode>
+                  <mu>0.1</mu>
+                  <mu2>0.1</mu2>
+                </ode>
+              </friction>
+            </surface>
           </collision>
           <visual name="visual">
             <geometry>
@@ -87,10 +106,22 @@ def spawn_red_ball(pose):
               <diffuse>1 0 0 1</diffuse>
             </material>
           </visual>
+          <inertial>
+            <mass>1.0</mass>
+            <inertia>
+              <ixx>0.4</ixx>
+              <ixy>0</ixy>
+              <ixz>0</ixz>
+              <iyy>0.4</iyy>
+              <iyz>0</iyz>
+              <izz>0.4</izz>
+            </inertia>
+          </inertial>
         </link>
       </model>
     </sdf>
     '''
+
 
     # Spawn the ball.
     try:
@@ -101,7 +132,11 @@ def spawn_red_ball(pose):
 
     # Apply a force to the ball so it moves.
     if response.success:
-        force_angle = random.randint(240, 300)
+        # We know that the distance between robot and ball is 5.5.
+        # And we know the shifting of the robot perpendicularly is pose.x.
+        # Then we want to know its angle pointing to the ball.
+        mean_angle = math.degrees(math.atan(pose.position.x / 5)) + 270
+        force_angle = gaussian_distribution(mean_angle, 10, (240, 300))
         response = apply_force_to_ball(f"mock_ball_{ball_index}", pose, force_angle)
 
     ball_index += 1
@@ -117,8 +152,14 @@ def subscribe_to_spawn_balls():
     rospy.Subscriber("/cas_sim/spawn_balls", Bool, callback)
 
 
+
+
+global spawned_balls
+spawned_balls = 0
+
+
 def main_loop():
-    global should_spawn_balls
+    global should_spawn_balls, spawned_balls
 
     # Start listening to the spawn_balls topic.
     subscribe_to_spawn_balls()
@@ -134,16 +175,22 @@ def main_loop():
         if curr_tick % spawn_interval != 0:
             continue
         if should_spawn_balls:
+            # When generating too many balls, stop for this session.
+            if spawned_balls >= 100:
+                spawned_balls = 0
+                should_spawn_balls = False
+                continue
+            spawned_balls += 1
             ball_pose = Pose()
-            # Randomize position x between -1.5 and 1.5.
-            ball_pose.position.x = random.uniform(-2.5, 2.5)
-            ball_pose.position.y = 2.5
+            # Randomize position x using normal distribution.
+            ball_pose.position.x = gaussian_distribution(0, 0.5, [-2, 2])
+            ball_pose.position.y = 2
             ball_pose.position.z = ball_diameter / 2 + ground_offset
 
             if spawn_red_ball(ball_pose):
-                rospy.loginfo("Mock ball spawned successfully.")
+                rospy.loginfo("[CAS_SIM] Mock ball spawned successfully.")
             else:
-                rospy.logerr("Failed to spawn mock ball.")
+                rospy.logerr("[CAS_SIM] Failed to spawn mock ball.")
 
 
 if __name__ == "__main__":
