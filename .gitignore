@@ -6,3 +6,7 @@ devel/
 logs/
 
 install/
+
+__pycache__/
+.env
+
