@@ -3,12 +3,11 @@
 import sys
 import math
 import signal
-import random
 
 import numpy as np
 import rospy
 from gazebo_msgs.msg import ModelState
-from gazebo_msgs.srv import SpawnModel
+from gazebo_msgs.srv import SpawnModel, GetModelState
 from geometry_msgs.msg import Pose, Vector3, Wrench
 from std_msgs.msg import Bool
 
@@ -21,10 +20,18 @@ def signal_handler(signal, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 
+def get_triton_robot_position():
+    rospy.wait_for_service('/gazebo/get_model_state')
+    get_model_state_service = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
+    data = get_model_state_service("triton_robot", "")
+    triton_robot_position = data.pose.position
+    return triton_robot_position
+
+
 # Define the size of the ball.
-ball_diameter = 0.15
-spawn_interval = 20
-throw_force = 5
+ball_diameter = 0.12
+spawn_interval = 6
+throw_force = 2.5
 ground_offset = 0
 
 
@@ -76,6 +83,23 @@ def spawn_red_ball(pose):
       <model name="red_ball">
         <pose>{pose.position.x} {pose.position.y} {pose.position.z} {pose.orientation.x} {pose.orientation.y} {pose.orientation.z}</pose>
         <link name="link">
+        
+        <sensor name='collision_sensor' type='contact'>
+          <always_on>1</always_on>
+          <update_rate>1000</update_rate>
+          <contact>
+            <collision>collision</collision>
+          </contact>
+          <plugin name='gazebo_ros_bumper' filename='libgazebo_ros_bumper.so'>
+            <ros>
+              <namespace>/cas_sim</namespace>
+              <remapping>bumper_states:=bumper_states</remapping>
+            </ros>
+            <contact_topic>/cas_sim/bumper_states</contact_topic>
+            <frameName>link</frameName>
+          </plugin>
+        </sensor>
+
           <collision name="collision">
             <geometry>
               <sphere>
@@ -89,8 +113,8 @@ def spawn_red_ball(pose):
               </bounce>
               <friction>
                 <ode>
-                  <mu>0.1</mu>
-                  <mu2>0.1</mu2>
+                  <mu>0.02</mu>
+                  <mu2>0.02</mu2>
                 </ode>
               </friction>
             </surface>
@@ -107,7 +131,7 @@ def spawn_red_ball(pose):
             </material>
           </visual>
           <inertial>
-            <mass>1.0</mass>
+            <mass>0.01</mass>
             <inertia>
               <ixx>0.4</ixx>
               <ixy>0</ixy>
@@ -135,8 +159,12 @@ def spawn_red_ball(pose):
         # We know that the distance between robot and ball is 5.5.
         # And we know the shifting of the robot perpendicularly is pose.x.
         # Then we want to know its angle pointing to the ball.
-        mean_angle = math.degrees(math.atan(pose.position.x / 5)) + 270
-        force_angle = gaussian_distribution(mean_angle, 10, (240, 300))
+        triton_robot_position = get_triton_robot_position()
+        advancing_distance = max((2.0 - triton_robot_position.y) * 0.1, 0) + 0.2
+        # Shoot the ball towards the robot.
+        shoot_angle = math.degrees(math.atan2(triton_robot_position.y + advancing_distance \
+                - pose.position.y, triton_robot_position.x - pose.position.x))
+        force_angle = gaussian_distribution(shoot_angle, 2, (shoot_angle - 4, shoot_angle + 4))
         response = apply_force_to_ball(f"mock_ball_{ball_index}", pose, force_angle)
 
     ball_index += 1
@@ -176,14 +204,14 @@ def main_loop():
             continue
         if should_spawn_balls:
             # When generating too many balls, stop for this session.
-            if spawned_balls >= 100:
+            if spawned_balls >= 400:
                 spawned_balls = 0
                 should_spawn_balls = False
                 continue
             spawned_balls += 1
             ball_pose = Pose()
             # Randomize position x using normal distribution.
-            ball_pose.position.x = gaussian_distribution(0, 0.5, [-2, 2])
+            ball_pose.position.x = gaussian_distribution(0, 2, [-2, 2])
             ball_pose.position.y = 2
             ball_pose.position.z = ball_diameter / 2 + ground_offset
 
