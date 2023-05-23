@@ -5,57 +5,65 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 from geometry_msgs.msg import Pose
+import matplotlib.pyplot as plt
 from torchvision import transforms
+import math
 
-# Instantiate CvBridge
 bridge = CvBridge()
+depth_map = np.empty((0,))
 
-# Define depth image callback function
-def depth_image_callback(msg):
+# Define color image callback function
+def color_image_callback(msg):
+    global depth_map
     try:
         # Convert ROS depth image message to OpenCV image
         model = YOLO("yolov8n.pt")
         cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
         cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-
-        # transform = transforms.Compose([
-        #     transforms.ToPILImage(),
-        #     transforms.Resize((256, 256)),
-        #     transforms.ToTensor()
-        # ])
-        # image = transform(cv_image)
-        # image = image.unsqueeze(0)
         results = model(cv_image)
-        print(results)
-        cv2.imshow("Image", results[0].plot())
-        #cv2.imshow("Image", cv_image)
-        cv2.waitKey(1)
+        for box in results[0].boxes:
+            x = int(box.xywh[0][0])
+            y = int(box.xywh[0][1])
+            depth_val = depth_map[y][x] + 0.18
+            obj_angle = ((x/640)*87)-43.5
+            object_coor = calculate_coordintes(depth_val, obj_angle)
+            print("Object Coordinates")
+            print(object_coor)
 
-        #model = YOLO("yolov8n-pose.pt")
-#         model = YOLO('yolov8n-pose.yaml')  # build a new model from YAML
-#         model = YOLO('yolov8n-pose.pt')  # load a pretrained model (recommended for training)
-#         model = YOLO('yolov8n-pose.yaml').load('yolov8n-pose.pt')  # build from YAML and transfer weights
-#
-# # Train the model
-#         model.train(data='coco8-pose.yaml', epochs=10, imgsz=640)
-#         cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-#         cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-#         results = model(cv_image)
-#         print(results)
-#         cv2.imshow("Image", results[0].plot())
-#         cv2.waitKey(1)
+        # cv2.imshow("Image", results[0].plot())
+        #cv2.imwrite("op.jpg", results[0].plot())
+        cv2.waitKey(1)
 
     except Exception as e:
         rospy.logerr(e)
+
+def depth_image_callback(msg):
+    global depth_map
+    l = np.frombuffer(msg.data, dtype=np.uint8)
+    depth_image = l.reshape(-1, 640, 4)
+    depth_image_bytes = depth_image.view(dtype=np.uint8).reshape(depth_image.shape + (-1,))
+    depth_map = np.frombuffer(depth_image_bytes, dtype=np.float32).reshape(depth_image.shape[:2])
+
+def calculate_coordintes(depth_val, obj_angle):
+    neg = False
+    a = depth_val
+    A = math.radians(90)
+    B = math.radians(obj_angle)
+    C = math.radians(90 - obj_angle)
+    b = (a * math.sin(B)) / math.sin(A)
+    c = (a * math.sin(C)) / math.sin(A)
+    return (b, c)
 
 def main():
     rospy.init_node('yolov8_pose_estimation')
 
     # Create a subscriber for the depth image
-    rospy.Subscriber('/camera/color/image_raw', Image, depth_image_callback)
-
-
-    # Create a publisher for the estimated poses
+    rospy.Subscriber('/camera/depth/image_raw', Image, depth_image_callback)
+    rospy.sleep(1)
+    plt.imshow(depth_map, cmap='gray')
+    plt.colorbar()
+    plt.savefig('depth_image.png')
+    rospy.Subscriber('/camera/color/image_raw', Image, color_image_callback)
     pose_publisher = rospy.Publisher('/object_poses', Pose, queue_size=10)
 
     rospy.spin()
