@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 
 import os
+import math
 from datetime import datetime
 import sys
 import signal
-import math
-import random
 
 import rospy
 import numpy as np
-from std_msgs.msg import Bool
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Pose
+from sensor_msgs.msg import Image
 from gazebo_msgs.msg import ContactsState
-from gazebo_msgs.srv import DeleteModel, GetWorldProperties
+from gazebo_msgs.srv import DeleteModel
+import cv2
+from cv_bridge import CvBridge
+from ultralytics import YOLO
+from torchvision import transforms
 
 from sim_helper import start_ball_spawning
+from kalman import kalman_filter
+from frame import organize_frame
 
 
 # ========== Termination Handler ==========
@@ -115,12 +120,67 @@ def move_right():
 
 # ========== Camera Data Callback ==========
 
-global camera_data
-camera_data = None
+global depth_map, prev_frames, kalman_outputs
+depth_map = None
+prev_frames = []
+kalman_outputs = []
+
+bridge = CvBridge()
 
 
-def camera_data_callback():
-    global camera_data
+def color_image_callback(msg):
+    global depth_map, prev_frames, kalman_outputs
+    if depth_map is None:
+        rospy.loginfo("Depth map is not ready yet.")
+        return
+    try:
+        # Convert ROS depth image message to OpenCV image
+        model = YOLO("yolov8n.pt")
+        cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+        cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        results = model(cv_image)
+        curr_frames = []
+        print('balls:', len(results[0].boxes))
+        for box in results[0].boxes:
+            x = int(box.xywh[0][0])
+            y = int(box.xywh[0][1])
+            depth_val = depth_map[y][x] + 0.18
+            obj_angle = ((x/640)*87)-43.5
+            object_coord = calculate_coordintes(depth_val, obj_angle)
+            if object_coord[0] == np.nan or object_coord[1] == np.nan:
+                continue
+            curr_frames.append(object_coord)
+        curr_frames = np.array(curr_frames)
+
+        print('curr_frames', curr_frames)
+
+        organized_frames = organize_frame(prev_frames, kalman_outputs, curr_frames)
+        print(organized_frames)
+
+        kalman_outputs = kalman_filter(organized_frames)
+        prev_frames = organized_frames
+
+
+    except Exception as e:
+        rospy.logerr(e)
+
+
+def depth_image_callback(msg):
+    global depth_map
+    l = np.frombuffer(msg.data, dtype=np.uint8)
+    depth_image = l.reshape(-1, 640, 4)
+    depth_image_bytes = depth_image.view(dtype=np.uint8).reshape(depth_image.shape + (-1,))
+    depth_map = np.frombuffer(depth_image_bytes, dtype=np.float32).reshape(depth_image.shape[:2])
+    
+
+def calculate_coordintes(depth_val, obj_angle):
+    a = depth_val
+    A = math.radians(90)
+    B = math.radians(obj_angle)
+    C = math.radians(90 - obj_angle)
+    b = (a * math.sin(B)) / math.sin(A)
+    c = (a * math.sin(C)) / math.sin(A)
+    return (b, c)
 
 
 # ========== Main Lifecycle ==========
@@ -146,6 +206,8 @@ if __name__ == "__main__":
         start_ball_spawning()
 
         rospy.Subscriber("/bumper_states", ContactsState, collision_callback)
+        rospy.Subscriber("/camera/depth/image_raw", Image, depth_image_callback)
+        rospy.Subscriber('/camera/color/image_raw', Image, color_image_callback)
 
         main_lifecycle()
 
