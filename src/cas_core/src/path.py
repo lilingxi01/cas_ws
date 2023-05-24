@@ -6,6 +6,25 @@ from geometry_msgs.msg import Twist
 from sensor_msgs.msg import LaserScan
 from gazebo_msgs.srv import *
 from gazebo_msgs.msg import ModelState
+from sklearn.linear_model import LinearRegression
+
+''' Trying to use linear regression to predict the path of the ball
+def decision(pos):
+    if(np.sqrt(pos[-1][0]**2+pos[-1][1]**2)<1):
+        path = LinearRegression().fit([pos[:,0]], pos[:,1].reshape(1,1))
+    print(f"coef: {path.coef_} intercept: {path.intercept_}")
+
+    '''
+def decision(pos):
+    if(np.sqrt(pos[-1][0]**2+pos[-1][1]**2)<1):
+        slope = (pos[-1][1]-pos[0][1])/(pos[-1][0]-pos[0][0])
+        y_intercept = pos[0][1]-slope*pos[0][0]
+        x_intercept = -y_intercept/slope
+        if(x_intercept>0):
+            return 1 #left
+        else:
+            return 2 #right
+    return 0 #straight
 
 def set_model_state(model_name,relative_entity_name, x, y, yaw):
     rospy.wait_for_service('/gazebo/set_model_state')
@@ -49,13 +68,21 @@ def path():
     collision = False
     #runs for 10 seconds
     for i in range(100):
-        if(not collision):
+        if(decision()==0):
             vel_msg.linear.y = 0.4
+            vel_msg.linear.x = 0.0
+            vel_msg.angular.z = 0.0
+            pub.publish(vel_msg)
+            rate.sleep()
+        elif(decision()==1):
+            vel_msg.linear.y = 0.4
+            vel_msg.linear.x = 1.0
             vel_msg.angular.z = 0.0
             pub.publish(vel_msg)
             rate.sleep()
         else:
-            vel_msg.linear.y = 0.0
+            vel_msg.linear.y = 0.4
+            vel_msg.linear.x = -1.0
             vel_msg.angular.z = 0.0
             pub.publish(vel_msg)
             rate.sleep()
