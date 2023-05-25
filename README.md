@@ -1,5 +1,7 @@
 <img src="https://imagedelivery.net/Dr98IMl5gQ9tPkFM5JRcng/921d64c3-8673-48e5-e056-eb899cfda800/HD" alt="Cover"/>
 
+**Demo recording: https://share.cleanshot.com/xZDJdJ6b**
+
 **Link to presentation recording: https://t.ly/YCy4**
 
 # Get Started
