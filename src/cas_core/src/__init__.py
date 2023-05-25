@@ -11,7 +11,7 @@ import numpy as np
 from geometry_msgs.msg import Twist, Pose
 from sensor_msgs.msg import Image
 from gazebo_msgs.msg import ContactsState
-from gazebo_msgs.srv import DeleteModel
+from gazebo_msgs.srv import DeleteModel, GetModelState, GetWorldProperties
 import cv2
 from cv_bridge import CvBridge
 from ultralytics import YOLO
@@ -69,8 +69,8 @@ def delete_model(model_name):
 
 
 HORIZONTAL_MOVE_RATE = 0.1
-HORIZONTAL_MAX_SPEED = 0.2
-FORWARD_MOVE_SPEED = 0.03
+HORIZONTAL_MAX_SPEED = 0.1
+FORWARD_MOVE_SPEED = 0.1
 
 global curr_action, cumulative_horizontal_displacement, curr_horizontal_velocity
 curr_action = None
@@ -82,7 +82,7 @@ def action_lifecycle():
     global curr_action, cumulative_horizontal_displacement, curr_horizontal_velocity
 
     cumulative_horizontal_displacement += curr_horizontal_velocity
-    dynamic_center_point = -cumulative_horizontal_displacement / 10
+    dynamic_center_point = 0
 
     if curr_action == "left":
         curr_horizontal_velocity = min(curr_horizontal_velocity - HORIZONTAL_MOVE_RATE, \
@@ -125,7 +125,7 @@ def go_straight():
 # ========== Decision Making ==========
 
 def decision(pos):
-    if (np.sqrt(pos[-1][0]**2+pos[-1][1]**2)<1):
+    if (np.sqrt(pos[-1][0]**2+pos[-1][1]**2) < 0.5):
         slope = (pos[-1][1]-pos[0][1])/(pos[-1][0]-pos[0][0])
         y_intercept = pos[0][1]-slope*pos[0][0]
         x_intercept = -y_intercept/slope
@@ -134,6 +134,49 @@ def decision(pos):
         else:
             return 2  # right.
     return 0  # straight.
+
+
+# ========== Hacking ==========
+
+def get_model_names():
+    rospy.wait_for_service('/gazebo/get_world_properties')
+    try:
+        get_world_properties = rospy.ServiceProxy('/gazebo/get_world_properties', GetWorldProperties)
+        resp = get_world_properties()
+        return resp.model_names
+    except rospy.ServiceException as e:
+        print("Service call failed: %s" % e)
+
+
+def get_relative_poses():
+    rospy.wait_for_service('/gazebo/get_model_state')
+
+    get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
+
+    # Get the list of all models in the simulation
+    model_names = get_model_names()
+
+    # Get the pose of the triton_robot
+    triton_state = get_model_state("triton_robot", "")
+    triton_pose = triton_state.pose
+
+    relative_poses = []
+
+    for model_name in model_names:
+        # Check if the model name starts with "mock_ball_"
+        if model_name.startswith("mock_ball_"):
+            model_state = get_model_state(model_name, "")
+            ball_pose = model_state.pose
+
+            # Calculate the relative pose
+            relative_x = ball_pose.position.x - triton_pose.position.x
+            relative_y = ball_pose.position.y - triton_pose.position.y
+
+            # Only keep relative coordinates with positive y value
+            if relative_y > 0:
+                relative_poses.append((relative_x, relative_y))
+
+    return np.array(relative_poses)
 
 
 # ========== Camera Data Callback ==========
@@ -175,32 +218,30 @@ def calculate_coordintes(depth_val, obj_angle):
 
 def decision_making_step():
     global image_msg, depth_map, prev_frames, kalman_outputs
-    snapshot_image_msg = image_msg
-    snapshot_depth_map = depth_map
-    if snapshot_depth_map is None or snapshot_image_msg is None:
-        rospy.loginfo("Depth map or image is not ready yet.")
-        return
+    # snapshot_image_msg = image_msg
+    # snapshot_depth_map = depth_map
+    # if snapshot_depth_map is None or snapshot_image_msg is None:
+    #     rospy.loginfo("Depth map or image is not ready yet.")
+    #     return
     try:
-        # Convert ROS depth image message to OpenCV image
-        model = YOLO("yolov8n.pt")
-        cv_image = bridge.imgmsg_to_cv2(snapshot_image_msg, desired_encoding='passthrough')
-        cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-        results = model(cv_image)
-        curr_frames = []
-        for box in results[0].boxes:
-            x = int(box.xywh[0][0])
-            y = int(box.xywh[0][1])
-            depth_val = snapshot_depth_map[y][x] + 0.18
-            if math.isnan(depth_val):
-                continue
-            obj_angle = ((x/640)*87)-43.5
-            object_coord = calculate_coordintes(depth_val, obj_angle)
-            curr_frames.append(object_coord)
-        curr_frames = np.array(curr_frames)
+    #     # Convert ROS depth image message to OpenCV image
+    #     model = YOLO("yolov8n.pt")
+    #     cv_image = bridge.imgmsg_to_cv2(snapshot_image_msg, desired_encoding='passthrough')
+    #     cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+    #     results = model(cv_image)
+    #     curr_frames = []
+    #     for box in results[0].boxes:
+    #         x = int(box.xywh[0][0])
+    #         y = int(box.xywh[0][1])
+    #         depth_val = snapshot_depth_map[y][x] + 0.18
+    #         if math.isnan(depth_val):
+    #             continue
+    #         obj_angle = ((x/640)*87)-43.5
+    #         object_coord = calculate_coordintes(depth_val, obj_angle)
+    #         curr_frames.append(object_coord)
+    #     curr_frames = np.array(curr_frames)
 
-        # cv2.imwrite("op.jpg", results[0].plot())
-        cv2.imshow("Image", results[0].plot())
-        print('curr_frames', curr_frames)
+        curr_frames = get_relative_poses()
 
         organized_frames = organize_frame(prev_frames, kalman_outputs, curr_frames)
         kalman_outputs = kalman_filter(organized_frames)
@@ -216,13 +257,14 @@ def decision_making_step():
                     future_decisions[1] += 1
                 elif curr_decision == 2:
                     future_decisions[2] += 1
-        print(np.argmax(future_decisions))
-        chosen_action = np.argmax(future_decisions)
-        if chosen_action == 0:
+        print('next_action:', np.argmax(future_decisions))
+        chosen_action = np.argmax(future_decisions[1:])
+        chosen_action_weight = np.max(future_decisions[1:])
+        if chosen_action_weight == 0:
             go_straight()
-        elif chosen_action == 1:
+        elif chosen_action == 0:
             move_left()
-        elif chosen_action == 2:
+        elif chosen_action == 1:
             move_right()
 
         cv2.waitKey(1)

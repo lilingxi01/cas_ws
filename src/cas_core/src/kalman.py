@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 
-more_steps = 5
+more_steps = 3
 
 
 def setup_kf(init_coord_0, init_coord_1):
