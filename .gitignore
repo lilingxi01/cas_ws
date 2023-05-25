@@ -10,3 +10,8 @@ install/
 __pycache__/
 .env
 
+.idea/
+.vscode/
+.vs/
+.nova/
+.atom/
