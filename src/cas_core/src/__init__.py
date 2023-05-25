@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 
 import os
+import math
 from datetime import datetime
 import sys
 import signal
-import math
-import random
 
 import rospy
 import numpy as np
-from std_msgs.msg import Bool
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Pose
+from sensor_msgs.msg import Image
 from gazebo_msgs.msg import ContactsState
-from gazebo_msgs.srv import DeleteModel, GetWorldProperties
+from gazebo_msgs.srv import DeleteModel
+import cv2
+from cv_bridge import CvBridge
+from ultralytics import YOLO
 
 from sim_helper import start_ball_spawning
+from kalman import kalman_filter
+from frame import organize_frame
 
 
 # ========== Termination Handler ==========
@@ -64,9 +68,9 @@ def delete_model(model_name):
 # ========== Main Actions ==========
 
 
-HORIZONTAL_MOVE_RATE = 0.05
-HORIZONTAL_MAX_SPEED = 0.1
-FORWARD_MOVE_SPEED = 0.1
+HORIZONTAL_MOVE_RATE = 0.1
+HORIZONTAL_MAX_SPEED = 0.2
+FORWARD_MOVE_SPEED = 0.03
 
 global curr_action, cumulative_horizontal_displacement, curr_horizontal_velocity
 curr_action = None
@@ -113,26 +117,128 @@ def move_right():
     curr_action = "right"
 
 
+def go_straight():
+    global curr_action
+    curr_action = None
+
+
+# ========== Decision Making ==========
+
+def decision(pos):
+    if (np.sqrt(pos[-1][0]**2+pos[-1][1]**2)<1):
+        slope = (pos[-1][1]-pos[0][1])/(pos[-1][0]-pos[0][0])
+        y_intercept = pos[0][1]-slope*pos[0][0]
+        x_intercept = -y_intercept/slope
+        if(x_intercept>0):
+            return 1  # left.
+        else:
+            return 2  # right.
+    return 0  # straight.
+
+
 # ========== Camera Data Callback ==========
 
-global camera_data
-camera_data = None
+global image_msg, depth_map, prev_frames, kalman_outputs
+image_msg = None
+depth_map = None
+prev_frames = []
+kalman_outputs = []
+
+bridge = CvBridge()
 
 
-def camera_data_callback():
-    global camera_data
+def color_image_callback(msg):
+    global image_msg
+    image_msg = msg
+
+
+def depth_image_callback(msg):
+    global depth_map
+    l = np.frombuffer(msg.data, dtype=np.uint8)
+    depth_image = l.reshape(-1, 640, 4)
+    depth_image_bytes = depth_image.view(dtype=np.uint8).reshape(depth_image.shape + (-1,))
+    depth_map = np.frombuffer(depth_image_bytes, dtype=np.float32).reshape(depth_image.shape[:2])
+    
+
+def calculate_coordintes(depth_val, obj_angle):
+    a = depth_val
+    A = math.radians(90)
+    B = math.radians(obj_angle)
+    C = math.radians(90 - obj_angle)
+    b = (a * math.sin(B)) / math.sin(A)
+    c = (a * math.sin(C)) / math.sin(A)
+    return (b, c)
 
 
 # ========== Main Lifecycle ==========
 
+
+def decision_making_step():
+    global image_msg, depth_map, prev_frames, kalman_outputs
+    snapshot_image_msg = image_msg
+    snapshot_depth_map = depth_map
+    if snapshot_depth_map is None or snapshot_image_msg is None:
+        rospy.loginfo("Depth map or image is not ready yet.")
+        return
+    try:
+        # Convert ROS depth image message to OpenCV image
+        model = YOLO("yolov8n.pt")
+        cv_image = bridge.imgmsg_to_cv2(snapshot_image_msg, desired_encoding='passthrough')
+        cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        results = model(cv_image)
+        curr_frames = []
+        for box in results[0].boxes:
+            x = int(box.xywh[0][0])
+            y = int(box.xywh[0][1])
+            depth_val = snapshot_depth_map[y][x] + 0.18
+            if math.isnan(depth_val):
+                continue
+            obj_angle = ((x/640)*87)-43.5
+            object_coord = calculate_coordintes(depth_val, obj_angle)
+            curr_frames.append(object_coord)
+        curr_frames = np.array(curr_frames)
+
+        # cv2.imwrite("op.jpg", results[0].plot())
+        cv2.imshow("Image", results[0].plot())
+        print('curr_frames', curr_frames)
+
+        organized_frames = organize_frame(prev_frames, kalman_outputs, curr_frames)
+        kalman_outputs = kalman_filter(organized_frames)
+        prev_frames = organized_frames
+
+        future_decisions = [0, 0, 0]
+        for kalman_output in kalman_outputs:
+            if kalman_output.shape[0] > 1:
+                curr_decision = decision(kalman_output)
+                if curr_decision == 0:
+                    future_decisions[0] += 1
+                elif curr_decision == 1:
+                    future_decisions[1] += 1
+                elif curr_decision == 2:
+                    future_decisions[2] += 1
+        print(np.argmax(future_decisions))
+        chosen_action = np.argmax(future_decisions)
+        if chosen_action == 0:
+            go_straight()
+        elif chosen_action == 1:
+            move_left()
+        elif chosen_action == 2:
+            move_right()
+
+        cv2.waitKey(1)
+
+    except Exception as e:
+        rospy.logerr(e)
+
+
 def main_lifecycle():
     # TODO: Implement this function.
 
-    lifecycle_loop = rospy.Rate(10)
+    lifecycle_loop = rospy.Rate(1)
 
     while not rospy.is_shutdown():
         action_lifecycle()
-
+        decision_making_step()
         lifecycle_loop.sleep()
 
 
@@ -146,6 +252,8 @@ if __name__ == "__main__":
         start_ball_spawning()
 
         rospy.Subscriber("/bumper_states", ContactsState, collision_callback)
+        rospy.Subscriber("/camera/depth/image_raw", Image, depth_image_callback)
+        rospy.Subscriber('/camera/color/image_raw', Image, color_image_callback)
 
         main_lifecycle()
 
