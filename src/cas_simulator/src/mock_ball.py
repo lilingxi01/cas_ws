@@ -29,9 +29,9 @@ def get_triton_robot_position():
 
 
 # Define the size of the ball.
-ball_diameter = 0.12
-spawn_interval = 6
-throw_force = 2.5
+ball_diameter = 0.18
+spawn_interval = 50
+throw_force = 0.35
 ground_offset = 0
 
 
@@ -113,8 +113,8 @@ def spawn_red_ball(pose):
               </bounce>
               <friction>
                 <ode>
-                  <mu>0.02</mu>
-                  <mu2>0.02</mu2>
+                  <mu>0.001</mu>
+                  <mu2>0.001</mu2>
                 </ode>
               </friction>
             </surface>
@@ -160,7 +160,7 @@ def spawn_red_ball(pose):
         # And we know the shifting of the robot perpendicularly is pose.x.
         # Then we want to know its angle pointing to the ball.
         triton_robot_position = get_triton_robot_position()
-        advancing_distance = max((2.0 - triton_robot_position.y) * 0.1, 0) + 0.2
+        advancing_distance = max((2.0 - triton_robot_position.y) * 0.2, 0) + 0.4
         # Shoot the ball towards the robot.
         shoot_angle = math.degrees(math.atan2(triton_robot_position.y + advancing_distance \
                 - pose.position.y, triton_robot_position.x - pose.position.x))

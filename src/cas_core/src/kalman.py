@@ -25,6 +25,8 @@ def setup_kf(init_coord_0, init_coord_1):
 def kalman_filter(inputs):
     output = []
     for input in inputs:
+        if len(input) == 0:
+            continue
         predicted_steps = []
         predicted = None
         if input.shape[0] <= 1:
